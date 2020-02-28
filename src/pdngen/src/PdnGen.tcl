@@ -386,7 +386,7 @@ proc read_enclosures {layer_name} {
   # debug "end"
 }
 
-proc get_via_enclosure {via_info width} {
+proc get_via_enclosure {via_info lower_width upper_width} {
   variable layers
   variable default_cutclass
   
@@ -422,6 +422,12 @@ proc get_via_enclosure {via_info width} {
     set selected_enclosure [list $min_lower_enclosure $max_lower_enclosure $min_upper_enclosure $max_upper_enclosure]
   } else {
     set enclosures [dict get $layers $layer_name cutclass [dict get $default_cutclass $layer_name] enclosures]
+    # debug "Enclosure set $enclosures"
+    set upper_enclosures {}
+    set lower_enclosures {}
+    
+    set width $lower_width
+      
     foreach size [lreverse [dict keys $enclosures]] {
       if {$width >= $size} {
           break
@@ -429,68 +435,83 @@ proc get_via_enclosure {via_info width} {
     }
 
     set enclosure_list [dict get $enclosures $size]
-    # debug "$enclosure_list"
+    # debug "Initial enclosure_list ($size)- $enclosure_list"
     if {$size > 0} {
-      set above 0
-      set below 0
       foreach enclosure $enclosure_list {
-        if {[dict exists $enclosure below]} {
-          set below 1
-        } elseif {[dict exists $enclosure above]} {
-          set above 1
-        } else {
-          set above 1
-          set below 1
-          break
-        }
-      }
-      if {$above == 0} {
-        set zero_enclosures_list [dict get $enclosures 0]
-        foreach enclosure $zero_enclosures_list {
-          dict set enclosure above 1
-          lappend enclosure_list $enclosure
-        }
-      }
-      if {$below == 0} {
-        set zero_enclosures_list [dict get $enclosures 0]
-        foreach enclosure $zero_enclosures_list {
-          dict set enclosure below 1
-          lappend enclosure_list $enclosure
-        }
-      }
-    }
-    
-    if {[llength $enclosure_list] > 1} {
-      set upper_min -1
-      set lower_min -1
-      foreach enclosure $enclosure_list {
-        # debug "test enclosure - $enclosure"
-        set this_min [expr min([dict get $enclosure overlap1], [dict get $enclosure overlap2])]
-        if {![dict exists $enclosure below]} {
-          if {$upper_min < 0 || $this_min < $upper_min} {
-            set upper_min $this_min
-            set upper_enc [list [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
-          }
-        }
         if {![dict exists $enclosure above]} {
-          if {$lower_min < 0 || $this_min < $lower_min} {
-            set lower_min $this_min
-            set lower_enc [list [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
-          }
+          lappend lower_enclosures $enclosure
         }
       }
-      set selected_enclosure [list {*}$lower_enc {*}$upper_enc]
-      # debug "a) $selected_enclosure"
-      
-    } else { 
-      set enclosure [lindex $enclosure_list 0]
-      set selected_enclosure [list [dict get $enclosure overlap1] [dict get $enclosure overlap2] [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
-      # debug "b) $selected_enclosure"
     }
-  }
-  # debug "$selected_enclosure"
-  return $selected_enclosure
 
+    set width $upper_width
+      
+    foreach size [lreverse [dict keys $enclosures]] {
+      if {$width >= $size} {
+          break
+      }
+    }
+
+    set enclosure_list [dict get $enclosures $size]
+    # debug "Initial enclosure_list ($size)- $enclosure_list"
+    if {$size > 0} {
+      foreach enclosure $enclosure_list {
+        if {![dict exists $enclosure above]} {
+          lappend upper_enclosures $enclosure
+        }
+      }
+    }
+
+    if {[llength $upper_enclosures] == 0} {
+      set zero_enclosures_list [dict get $enclosures 0]
+      foreach enclosure $zero_enclosures_list {
+        if {![dict exists $enclosure below]} {
+          lappend upper_enclosures $enclosure
+        }
+      }
+    }
+    if {[llength $lower_enclosures] == 0} {
+      set zero_enclosures_list [dict get $enclosures 0]
+      foreach enclosure $zero_enclosures_list {
+        if {![dict exists $enclosure above]} {
+          lappend lower_enclosures $enclosure
+        }
+      }
+    }
+    set upper_min -1
+    set lower_min -1
+    if {[llength $upper_enclosures] > 1} {
+      foreach enclosure $upper_enclosures {
+        # debug "upper enclosure - $enclosure"
+        set this_min [expr min([dict get $enclosure overlap1], [dict get $enclosure overlap2])]
+        if {$upper_min < 0 || $this_min < $upper_min} {
+          set upper_min $this_min
+          set upper_enc [list [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
+          # debug "upper_enc: $upper_enc"
+        }
+      }
+    } else {
+      set enclosure [lindex $upper_enclosures 0]
+      set upper_enc [list [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
+    }
+    if {[llength $lower_enclosures] > 1} {
+      foreach enclosure $lower_enclosures {
+        # debug "lower enclosure - $enclosure"
+        set this_min [expr min([dict get $enclosure overlap1], [dict get $enclosure overlap2])]
+        if {$lower_min < 0 || $this_min < $lower_min} {
+          set lower_min $this_min
+          set lower_enc [list [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
+          # debug "lower_enc: $lower_enc"
+        }
+      }
+    } else {
+      set enclosure [lindex $lower_enclosures 0]
+      set lower_enc [list [dict get $enclosure overlap1] [dict get $enclosure overlap2]]
+    }
+    set selected_enclosure [list {*}$lower_enc {*}$upper_enc]
+  }
+  # debug "selected $selected_enclosure"
+  return $selected_enclosure
 }
 
 proc select_via_info {lower} {
@@ -614,7 +635,7 @@ proc use_arrayspacing {layer_name rows columns} {
 proc get_via_option {lower width height constraints} {
   variable def_units
   
-  # dedbug "get_via_option: {$lower $width $height}"
+  # debug "get_via_option: {$lower $width $height}"
   set via_info [lindex [select_via_info $lower] 1]
   set lower_dir [get_dir $lower]
 
@@ -623,13 +644,33 @@ proc get_via_option {lower width height constraints} {
   set cut_width  [lindex [dict get $via_info cut size] 0]
   set cut_height [lindex [dict get $via_info cut size] 1]
 
-  # Adjust the width and height values to the next largest allowed value if necessary
-  set lower_width  [get_adjusted_width $lower $width]
-  set lower_height [get_adjusted_width $lower $height]
-  set upper_width  [get_adjusted_width $upper $width]
-  set upper_height [get_adjusted_width $upper $height]
-  # debug "min - [expr min($lower_width,$lower_height,$upper_width,$upper_height)]"
-  set via_enclosure [get_via_enclosure $via_info [expr min($lower_width,$lower_height,$upper_width,$upper_height)]]
+  if {[dict exists $constraints width $lower]} {
+    if {[get_dir $lower] == "hor"} {
+      set lower_height [expr round([dict get $constraints width $lower] * $def_units)]
+      set lower_width  [get_adjusted_width $lower $width]
+    } else {
+      set lower_width [expr round([dict get $constraints width $lower] * $def_units)]
+      set lower_height [get_adjusted_width $lower $height]
+    }
+  } else {
+    # Adjust the width and height values to the next largest allowed value if necessary
+    set lower_width  [get_adjusted_width $lower $width]
+    set lower_height [get_adjusted_width $lower $height]
+  }
+  if {[dict exists $constraints width $upper]} {
+    if {[get_dir $upper] == "hor"} {
+      set upper_height [expr round([dict get $constraints width $upper] * $def_units)]
+      set upper_width  [get_adjusted_width $upper $width]
+    } else {
+      set upper_width [expr round([dict get $constraints width $upper] * $def_units)]
+      set upper_height [get_adjusted_width $upper $height]
+    }
+  } else {
+    set upper_width  [get_adjusted_width $upper $width]
+    set upper_height [get_adjusted_width $upper $height]
+  }
+  # debug "min - \[expr min($lower_width,$lower_height,$upper_width,$upper_height)\]"
+  set via_enclosure [get_via_enclosure $via_info [expr min($lower_width,$lower_height)] [expr min($upper_width,$upper_height)]]
   set min_lower_enclosure [expr min([lindex $via_enclosure 0], [lindex $via_enclosure 1])]
   set max_lower_enclosure [expr max([lindex $via_enclosure 0], [lindex $via_enclosure 1])]
   set min_upper_enclosure [expr min([lindex $via_enclosure 2], [lindex $via_enclosure 3])]
@@ -639,11 +680,11 @@ proc get_via_option {lower width height constraints} {
   set i 1
   set xcut_pitch [lindex [dict get $via_info cut spacing] 0]
   if {$lower_dir == "hor"} {
-    set via_width_lower [expr $cut_width + $xcut_pitch * ($i - 1) + 2 * $max_lower_enclosure]
-    set via_width_upper [expr $cut_width + $xcut_pitch * ($i - 1) + 2 * $min_upper_enclosure]
-  } else {
     set via_width_lower [expr $cut_width + $xcut_pitch * ($i - 1) + 2 * $min_lower_enclosure]
     set via_width_upper [expr $cut_width + $xcut_pitch * ($i - 1) + 2 * $max_upper_enclosure]
+  } else {
+    set via_width_lower [expr $cut_width + $xcut_pitch * ($i - 1) + 2 * $max_lower_enclosure]
+    set via_width_upper [expr $cut_width + $xcut_pitch * ($i - 1) + 2 * $min_upper_enclosure]
   }
   if {[dict exists $constraints cut_pitch]} {set xcut_pitch [expr round([dict get $constraints cut_pitch] * $def_units)]}
   
@@ -659,7 +700,7 @@ proc get_via_option {lower width height constraints} {
   }
   set xcut_spacing [expr $xcut_pitch - $cut_width]
   set columns [expr max(1, $i - 1)]
-  # debug "$columns W: $via_width_lower >= $lower_width && $via_width_upper >= $upper_width"
+  # debug "cols $columns W: via_width_lower $via_width_lower >= lower_width $lower_width || via_width_upper $via_width_upper >= upper_width $upper_width"
   if {[dict exists $constraints max_columns]} {
     if {$columns > [dict get $constraints max_columns]} {
       set columns [dict get $constraints max_columns]
@@ -691,7 +732,7 @@ proc get_via_option {lower width height constraints} {
     set via_height_upper [expr $cut_height + $ycut_pitch * ($i - 1) + 2 * $min_upper_enclosure]
   }
   if {[dict exists $constraints cut_pitch]} {set ycut_pitch [expr round([dict get $constraints cut_pitch] * $def_units)]}
-  while {$via_height_lower < $lower_height && $via_height_upper < $upper_height} {
+  while {$via_height_lower < $lower_height || $via_height_upper < $upper_height} {
     incr i
     if {$lower_dir == "hor"} {
       set via_height_lower [expr $cut_height + $ycut_pitch * ($i - 1) + 2 * $min_lower_enclosure]
@@ -744,20 +785,14 @@ proc get_via_option {lower width height constraints} {
     if {$lower_dir == "hor"} {
       if {$lower_enc_height < $max_lower_enclosure} {
         set xBotEnc $max_lower_enclosure
-        if {$lower_enc_width > $xBotEnc} {
-          set xBotEnc $lower_enc_width
-        }
       } else {
         set xBotEnc $lower_enc_width
       }
-      set yBotEnc $lower_enc_height
+      set yBotEnc $min_lower_enclosure
     } else {
-      set xBotEnc $lower_enc_width
+      set xBotEnc $min_lower_enclosure
       if {$lower_enc_width < $max_lower_enclosure} {
         set yBotEnc $max_lower_enclosure
-        if {$lower_enc_height > $yBotEnc} {
-          set yBotEnc $lower_enc_height
-        }
       } else {
         set yBotEnc $lower_enc_height
       }
@@ -768,20 +803,23 @@ proc get_via_option {lower width height constraints} {
     if {[get_dir $upper] == "hor"} {
       if {$upper_enc_height < $max_upper_enclosure} {
         set xTopEnc $max_upper_enclosure
-        if {$upper_enc_width > $xTopEnc} {
-          set xTopEnc $upper_enc_width
-        }
       } else {
         set xTopEnc $upper_enc_width
       }
-      set yTopEnc $upper_enc_height
+      if {[dict exists $constraints stack_top] && [dict get $constraints stack_top] == $upper} {
+        set yTopEnc $upper_enc_height
+      } else {
+        set yTopEnc $min_upper_enclosure
+      }
     } else {
-      set xTopEnc $upper_enc_width
+      # debug "constraints: $constraints"
+      if {[dict exists $constraints stack_top] && [dict get $constraints stack_top] == $upper} {
+        set xTopEnc $upper_enc_width
+      } else {
+        set xTopEnc $min_upper_enclosure
+      }
       if {$upper_enc_width < $max_upper_enclosure} {
         set yTopEnc $max_upper_enclosure
-        if {$upper_enc_height > $yTopEnc} {
-          set yTopEnc $upper_enc_height
-        }
       } else {
         set yTopEnc $upper_enc_height
       }
@@ -975,6 +1013,7 @@ proc generate_vias {layer1 layer2 intersections constraints} {
     set connection_layers [lrange $metal_layers $i1 [expr $i2 - 1]]
     # debug "  # Connection layers: [llength $connection_layers]"
     # debug "  Connection layers: $connection_layers"
+    dict set constraints stack_top $layer2_name
     foreach lay $connection_layers {
       set via_name [get_via $lay $width $height $constraints]
       foreach via [instantiate_via $via_name $x $y] {
