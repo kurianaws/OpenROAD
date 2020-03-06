@@ -1430,7 +1430,11 @@ proc generate_stripes {tag} {
 
     #Upper layer stripes
     if {[dict exists $grid_data straps $lay width]} {
-      set area [dict get $grid_data area]
+      if {[get_dir $lay] == "hor"} {
+        set area [get_core_area]
+      } else {
+        set area [dict get $grid_data area]
+      }
       if {[dict exists $grid_data core_ring] && [dict exists $grid_data core_ring $lay]} {
         set area [adjust_area_for_core_rings $lay $area]
       }
@@ -2066,6 +2070,12 @@ proc set_core_area {xmin ymin xmax ymax} {
   dict set design_data config core_area [list $xmin $ymin $xmax $ymax]
 }
 
+proc get_core_area {} {
+  variable design_data
+
+  return [get_extent [get_stdcell_area]]
+}
+
 proc write_pdn_strategy {} {
   variable design_data
   
@@ -2590,7 +2600,6 @@ proc generate_obstructions {layer_name} {
   variable stripe_locs
   variable twowidths_table
   variable tech
-  variable block
   
   # debug "layer $layer_name"
   foreach tag {"POWER" "GROUND"} {
@@ -2628,11 +2637,80 @@ proc generate_obstructions {layer_name} {
         set x_change [expr $required_spacing_pref    - $min_spacing]
         set y_change [expr $required_spacing_nonpref - $min_spacing]
       }
-      # debug "OBS: $layer [expr $xMin - $x_change] [expr $yMin - $y_change] [expr $xMax + $x_change] [expr $yMax + $y_change]"
-      set obs [odb::dbObstruction_create $block $layer [expr $xMin - $x_change] [expr $yMin - $y_change] [expr $xMax + $x_change] [expr $yMax + $y_change]]
-      $obs setMinSpacing $min_spacing
+      
+      create_obstruction_object $layer $min_spacing [expr $xMin - $x_change] [expr $yMin - $y_change] [expr $xMax + $x_change] [expr $yMax + $y_change]
     }
   }
+}
+
+proc create_obstruction_object {layer min_spacing xMin yMin xMax yMax} {
+  variable block
+  
+  # debug "OBS: [$layer getName] $xMin $yMin $xMax $yMax"
+  set obs [odb::dbObstruction_create $block $layer [expr $xMin - $x_change] [expr $yMin - $y_change] [expr $xMax + $x_change] [expr $yMax + $y_change]]
+  $obs setMinSpacing $min_spacing
+}
+
+proc create_obstruction_object {layer min_spacing xMin yMin xMax yMax} {
+  variable block
+  variable obstruction_index
+  
+  incr obstruction_index
+  set net_name "obstruction_$obstruction_index"
+  if {[set obs_net [$block findNet $net_name]] == "NULL"} {
+    set obs_net [odb::dbNet_create $block $net_name]
+  }
+  # debug "obs_net [$obs_net getName]"
+  if {[set wire [$obs_net getWire]] == "NULL"} {
+    set wire [odb::dbWire_create $obs_net]
+  }
+  # debug "Wire - net [[$wire getNet] getName]"
+  set encoder [odb::dbWireEncoder]
+  $encoder begin $wire
+  
+  set layer_pitch [$layer getPitch]
+  set layer_width [$layer getWidth]
+  # debug "Layer - [$layer getName], pitch $layer_pitch, width $layer_width"
+  set core_area [get_core_area]
+  # debug "core_area $core_area"
+  set relative_xMin [expr $xMin - [lindex $core_area 0]]
+  set relative_xMax [expr $xMax - [lindex $core_area 0]]
+  set relative_yMin [expr $yMin - [lindex $core_area 1]]
+  set relative_yMax [expr $yMax - [lindex $core_area 1]]
+  # debug "relative to core area $relative_xMin $relative_yMin $relative_xMax $relative_yMax"
+  
+  # debug "OBS: [$layer getName] $xMin $yMin $xMax $yMax"
+  # Determine which tracks are blocked
+  if {[get_dir [$layer getName]] == "hor"} {
+    set pitch_start [expr $relative_yMin / $layer_pitch]
+    if {$relative_yMin % $layer_pitch > ($min_spacing + $layer_width / 2)} {
+      incr pitch_start
+    }
+    set pitch_end [expr $relative_yMax / $layer_pitch]
+    if {$relative_yMax % $layer_pitch > $layer_width / 2} {
+      incr pitch_end
+    }
+    for {set i $pitch_start} {$i <= $pitch_end} {incr i} {
+      $encoder newPath $layer ROUTED
+      $encoder addPoint [expr $relative_xMin + [lindex $core_area 0]] [expr $i * $layer_pitch + [lindex $core_area 1]]
+      $encoder addPoint [expr $relative_xMax + [lindex $core_area 0]] [expr $i * $layer_pitch + [lindex $core_area 1]]
+    }
+  } else {
+    set pitch_start [expr $relative_xMin / $layer_pitch]
+    if {$relative_xMin % $layer_pitch > ($min_spacing + $layer_width / 2)} {
+      incr pitch_start
+    }
+    set pitch_end [expr $relative_xMax / $layer_pitch]
+    if {$relative_xMax % $layer_pitch > $layer_width / 2} {
+      incr pitch_end
+    }
+    for {set i $pitch_start} {$i <= $pitch_end} {incr i} {
+      $encoder newPath $layer ROUTED
+      $encoder addPoint [expr $i * $layer_pitch + [lindex $core_area 0]] [expr $relative_yMin + [lindex $core_area 1]]
+      $encoder addPoint [expr $i * $layer_pitch + [lindex $core_area 0]] [expr $relative_yMax + [lindex $core_area 1]]
+    }
+  }
+  $encoder end
 }
 
 proc add_grid {} {
